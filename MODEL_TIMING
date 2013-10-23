@@ -1,0 +1,54 @@
+--TIMING--
+
+--Image: 276 x 460 RGB, JPEG Image
+--Pyramid: 10 Levels
+
+
+---------------------
+--Normalizing Image--
+---------------------
+--normalizeImage: 0.006221 seconds--
+
+
+-----------------------
+--Generating Channels--
+-----------------------
+--generateChannels: 0.02459 seconds--
+
+
+--------------------
+--Border Ownership--
+--------------------
+----makeBorderOwnership: 9.9 seconds----
+
+--BELOW IS ONLY FOR ONE CHANNEL (9 different channels = x9)
+
+--makePyramid (for 10 levels): 0.04 seconds
+--edgeEvenPyramid (1 convolution per level): 0.11 seconds****
+--edgeOddPyramid (1 convolution per level): 0.08 seconds****
+--makeComplexEdge (nested for-loops): 0.052 seconds
+
+--gaborPyramid (convolution per level): 0.09 seconds****
+--csPyramid (convolution per level): 0.10 seconds****
+
+--separatePyr: 0.006 seconds
+--normCSPyr2 (nested for-loop): 0.027 seconds
+--borderPyramid: 0.43 seconds
+--------vonMisesSum (2 convolutions per level): 0.13 seconds****
+
+
+------------
+--GROUPING--
+------------
+----makeGrouping: 17.5 seconds---
+
+--BELOW IS ONLY FOR ONE CHANNEL (9 different channels = x9)
+
+--groupingPyramidMaxDiff: 2.0 seconds****
+--mergeLevel: 0.002 seconds
+
+
+----------------------
+--ITTI NORMALIZATION--
+----------------------
+--ittiNorm: 0.37 seconds--
