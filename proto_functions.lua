@@ -42,6 +42,8 @@ function getDefaultParameters(mxLevel)
    local params =  {
       channels = 'ICO',
       maxLevel = local_maxLevel,
+      numOri = local_oris:size(1),
+      oris = local_oris,
       evenCellsPrs = {minLevel = local_minLevel,
                       maxLevel = local_maxLevel,
                       oris = local_oris,
@@ -136,7 +138,7 @@ end
 function generateChannels(img, params, fil_vals)
    --Get different feature channels
    local gray,R,G,B,Y =  makeColors(img);
-   
+
    --Generate color opponency channels
    local rg = R - G;
    local by = B - Y;
@@ -172,9 +174,7 @@ function generateChannels(img, params, fil_vals)
                                                                   {data = torch.DoubleTensor(gray), ori = 3 * math.pi/4, type = 'Orientation', filval = fil_vals[1][4]} } }
       end
    end
-   
    return return_result;
-   
 end
 
 --
@@ -246,33 +246,76 @@ end
 --
 --function: Edge Even Pyramid
 --
-function edgeEvenPyramid(map,params,fil_vals)
-   local prs = params.evenCellsPrs;   
-   
-   --Initialize newMap
-   local newMap = {};
-   for i = prs.minLevel,prs.maxLevel do
-      newMap[i] = { orientation = {} };
+function computeBorderPyramids(map,params,even_fil_vals,odd_fil_vals,gabor_fil_val,cs_fil_val,isOrientation)
+   local depth = params.maxLevel;
+
+   --Initialize cPyr,gaborPyr
+   local cPyr = {};
+   --local csPyr = {};
+   local csPyr1 = {};
+   local csPyr2 = {};
+   for i = 1,depth do
+      cPyr[i] = { orientation = {} }
+      --csPyr[i] = {data = {} }
+      csPyr1[i] = { data = {} }
+      csPyr2[i] = { data = {} }
    end
+
    --timerr = torch.Timer();
    local temp_data,outputs;
-   for level = prs.minLevel,prs.maxLevel do
+   local temp_even_out, temp_odd_out;
+   local temp_sum, temp_max, norm, scale;
+
+   for level = 1,depth do
       temp_data = torch.DoubleTensor(map[level].data);
       temp_data = prePadImage(torch.DoubleTensor(1,temp_data:size()[1],temp_data:size()[2]):copy(temp_data),MAX_FILTER_SIZE,MAX_FILTER_SIZE);
       
-      conv:forward(temp_data)
-      outputs = conv.output;
+      conv1:forward(temp_data)
+      outputs = conv1.output;
 
-      for local_ori = 1,prs.numOri do
-         newMap[level].orientation[local_ori] = {ori = prs.oris[local_ori], data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[fil_vals[1][local_ori]])};
-         ------------------------------------------------------------------------------
+      for local_ori = 1,params.numOri do
+         --Get Even Edge Output
+         temp_even_out=torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[even_fil_vals[1][local_ori]]);
+         
+         --Get Odd Edge Output
+         temp_odd_out=torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[odd_fil_vals[1][local_ori]]);
+         
+         --Make Complex Edge
+         cPyr[level].orientation[local_ori] = {data = torch.sqrt(torch.pow(temp_even_out,2) + torch.pow(temp_odd_out,2)) };
          ------------------------------------------------------------------------------
          ------------------------------------------------------------------------------
       end
-   end
-   --print('Time elapse = ' .. timerr:time().real);
 
-   return newMap;
+      --Get cs gabor pyramid and separate
+      if(isOrientation) then
+         --csPyr[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[gabor_fil_val]);
+         csPyr1[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[gabor_fil_val]);
+         csPyr2[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[gabor_fil_val]) * -1;
+      else
+         --Get cs pyarmid and separate
+         --csPyr[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[cs_fil_val])
+         csPyr1[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[cs_fil_val])
+         csPyr2[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[cs_fil_val]) * -1;
+      end
+      csPyr1[level].data[torch.lt(csPyr1[level].data,0)] = 0;
+      csPyr2[level].data[torch.lt(csPyr2[level].data,0)] = 0;
+      
+      --Normalize cs pyramids
+      temp_sum = csPyr1[level].data + csPyr2[level].data;
+      norm = maxNormalizeLocalMax(temp_sum,torch.DoubleTensor({0,10}));
+      
+      temp_max = torch.max(temp_sum);
+      if (temp_max ~= 0) then
+         scale = torch.max(norm) / temp_max;
+      else
+         scale = 0;
+      end
+      
+      csPyr1[level].data = csPyr1[level].data * scale;
+      csPyr2[level].data = csPyr2[level].data * scale;
+   end
+
+   return cPyr,csPyr1,csPyr2;
 end
 
 --
@@ -313,86 +356,6 @@ function makeOddOrientationCells(theta,lambda,sigma,gamma)
    msk2 = torch.DoubleTensor(msk2 - torch.mean(msk2)):clone();
    
    return msk1, msk2;
-end
-
---
---function: Edge Odd Pyramid
---
-function edgeOddPyramid(map,params,fil_vals)
-   local prs = params.oddCellsPrs;
-   
-   --Initialize newMap
-   local newMap1 = {}
-   local newMap2 = {}
-   
-   for i = prs.minLevel,prs.maxLevel do
-      newMap1[i] = { orientation = {} }
-      newMap2[i] = { orientation = {} }
-   end
-   
-   local temp_data, outputs;
-   for level = prs.minLevel,prs.maxLevel do
-      temp_data = torch.DoubleTensor(map[level].data);
-      temp_data = prePadImage(torch.DoubleTensor(1,temp_data:size()[1],temp_data:size()[2]):copy(temp_data),MAX_FILTER_SIZE,MAX_FILTER_SIZE);
-      
-      conv:forward(temp_data)
-      outputs = conv.output;
-      for local_ori = 1,prs.numOri do
-         newMap1[level].orientation[local_ori] = {ori = prs.oris[local_ori], data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[fil_vals[1][local_ori]])};
-         --newMap2[level].orientation[local_ori] = {ori = prs.oris[local_ori], data = {1,2;3,4} };
-         ------------------------------------------------------------------------------
-         ------------------------------------------------------------------------------
-         ------------------------------------------------------------------------------
-      end
-   end
-   
-   return newMap1,newMap2;
-end
-
---
---function: Make Complex Edge
---
-function makeComplexEdge(EPyr, OPyr)
-   local cPyr = {};
-
-   for i = 1,#EPyr do
-      cPyr[i] = { orientation = {} }
-   end
-
-   for level = 1,#EPyr do
-      for local_ori = 1,#EPyr[level].orientation do
-         cPyr[level].orientation[local_ori] = {data = torch.sqrt(torch.pow(torch.Tensor(EPyr[level].orientation[local_ori].data),2) + torch.pow(torch.Tensor(OPyr[level].orientation[local_ori].data),2)) };
-      end
-   end
-   
-   return cPyr;
-end
-
---
---function: Gabor Pyramid
---
-function gaborPyramid(pyr,ori,params, fil_val)
-   local depth = params.maxLevel;
-   local gaborPrs = params.gaborPrs;
-   local Evmsk = makeEvenOrientationCells(ori,gaborPrs.lambda,gaborPrs.sigma,gaborPrs.gamma);
-   local gaborPyr = {};
-   for i = 1,depth do
-      gaborPyr[i] = { data = {} }
-   end
- 
-   local temp_data;
-   for level = 1,depth do
-      ------------------------------------------------------------------------------
-      ------------------------------------------------------------------------------
-      temp_data = torch.DoubleTensor(pyr[level].data);
-      temp_data = prePadImage(torch.DoubleTensor(1,temp_data:size()[1],temp_data:size()[2]):copy(temp_data),MAX_FILTER_SIZE,MAX_FILTER_SIZE);
-      conv:forward(temp_data);
-      outputs = conv.output;
-      gaborPyr[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[fil_val]);
-      ------------------------------------------------------------------------------
-      ------------------------------------------------------------------------------
-   end
-   return gaborPyr;
 end
 
 --
@@ -451,34 +414,6 @@ function makeCenterSurround(std_center, std_surround)
    msk = msk - (torch.sum(msk) / (msk:size()[1] * msk:size()[2]))
 
    return msk;
-end
-
---
---function: CS Pyramid
---
-function csPyramid(pyr,params,fil_val)
-   local depth = params.maxLevel;
-   local csPrs = params.csPrs;
-   local CSmsk = makeCenterSurround(csPrs.inner,csPrs.outer);
-   local csPyr = {};
-   for i = 1,depth do
-      csPyr[i] = { data = {} }
-   end
-
-   local temp_data;
-   for level = 1,depth do
-      ------------------------------------------------------------------------------   
-      ------------------------------------------------------------------------------
-      temp_data = torch.DoubleTensor(pyr[level].data);
-      temp_data = prePadImage(torch.DoubleTensor(1,temp_data:size()[1],temp_data:size()[2]):copy(temp_data),MAX_FILTER_SIZE,MAX_FILTER_SIZE);
-      conv:forward(temp_data);
-      outputs = conv.output;
-      csPyr[level].data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[fil_val]);
-      ------------------------------------------------------------------------------
-      ------------------------------------------------------------------------------
-   end
-   
-   return csPyr;
 end
 
 --
@@ -560,37 +495,6 @@ function sumPyr(pyr1,pyr2)
 end
 
 --
---function: Normalize CS Pyramids (2)
---
-function normCSPyr2(csPyr1,csPyr2)
-   local newPyr1 = {};
-   local newPyr2 = {};
-   for i = 1,#csPyr1 do
-      newPyr1[i] = { data = {} }
-      newPyr2[i] = { data = {} }
-   end
-   
-   local temp;
-   local norm;
-   local scale;
-   for level = 1,#csPyr1 do
-      temp = sumPyr(csPyr1,csPyr2);
-      norm = maxNormalizeLocalMax(temp[level].data,torch.DoubleTensor({0,10}));
-
-      if (torch.max(temp[level].data) ~= 0) then
-         scale = torch.max(norm) / torch.max(temp[level].data);
-      else
-         scale = 0;
-      end
-      
-      newPyr1[level].data = csPyr1[level].data:clone() * scale;
-      newPyr2[level].data = csPyr2[level].data:clone() * scale;
-   end
-
-   return newPyr1,newPyr2;
-end
-
---
 --function: Factorial
 --
 function fact (n)
@@ -669,16 +573,17 @@ function vonMisesPyramid(map, vmPrs, fil_vals1, fil_vals2)
       msk2[l] = { orientation = {} };
    end
    
-   local temp_data;
+   local temp_data,outputs;
    for level = vmPrs.minLevel,vmPrs.maxLevel do
       if(#map[level].data ~= 0) then
          temp_data = torch.DoubleTensor(map[level].data);
          temp_data = prePadImage(torch.DoubleTensor(temp_data:size()):copy(temp_data),MAX_FILTER_SIZE,MAX_FILTER_SIZE,0);
          
-         conv:forward(temp_data);
+         conv2:forward(temp_data);
+         outputs = conv2.output;
          for ori = 1,vmPrs.numOri do
             -------------------------------
-            -------------------------------            
+            -------------------------------
             pyr1[level].orientation[ori] = {data = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[fil_vals1[1][ori]]), ori = vmPrs.oris[ori] + (math.pi / 2)};
             -------------------------------
             -------------------------------
@@ -710,7 +615,7 @@ function vonMisesSum(csPyr, vmPrs,vmfil_vals1,vmfil_vals2)
    local msk2;
 
    --create pyramid of center surround convoled with von Mises distribution
-   vmPyr1, msk1, vmPyr2, msk2 = vonMisesPyramid(csPyr,vmPrs,vmfil_vals1,vmfil_vals2);   
+   vmPyr1, msk1, vmPyr2, msk2 = vonMisesPyramid(csPyr,vmPrs,vmfil_vals1,vmfil_vals2); 
    for level = 1, maxLevel do
       map1[level] = { orientation = {} };
       map2[level] = { orientation = {} };
@@ -738,7 +643,7 @@ function vonMisesSum(csPyr, vmPrs,vmfil_vals1,vmfil_vals2)
          end
       end   
    end
-   
+
    return map1,msk1,map2,msk2;
 end
 
@@ -771,17 +676,14 @@ function borderPyramid(csPyrL,csPyrD,cPyr,params,VM_fil_vals1,VM_fil_vals2)
    local vmL1,msk1,vmL2,msk2;
    local vmD1, csmsk1,vmD2,csmsk2;
    
-   --timerr = torch.Timer();
+   --a = torch.Timer();
    vmL1, msk1, vmL2, msk2 = vonMisesSum(csPyrL,vmPrs,VM_fil_vals1,VM_fil_vals2);
-   --print('Von Mises Sum 1 = ' .. timerr:time().real);         
-   --timerr = torch.Timer();   
-   vmD1, csmsk1, vmD2, csmsk2 = vonMisesSum(csPyrD, vmPrs,VM_fil_vals1,VM_fil_vals2);
-   --print('Von Mises Sum 2 = ' .. timerr:time().real);
-   
+   --print("Sum time = " .. a:time().real)
+   vmD1, csmsk1, vmD2, csmsk2 = vonMisesSum(csPyrD, vmPrs,VM_fil_vals1,VM_fil_vals2);   
 
    local bpyr1_temp;
    local bpyr2_temp;
-
+   
    --calculate border ownership and grouping responses
    for level = bPrs.minLevel,bPrs.maxLevel do
       for ori_cnt = 1,bPrs.numOri do
@@ -804,8 +706,6 @@ function borderPyramid(csPyrL,csPyrD,cPyr,params,VM_fil_vals1,VM_fil_vals2)
          bPyr4[level].orientation[ori_cnt] = {data = bpyr4_temp:clone(), ori = msk2[level].orientation[ori_cnt].ori + math.pi, invmsk = msk2[level].orientation[ori_cnt].data};
       end
    end
-   --print('border pyramid FINAL = ' .. timerr:time().real);
-
    return bPyr1,bPyr2,bPyr3,bPyr4;
 end
 
@@ -824,60 +724,33 @@ function makeBorderOwnership(im_channels,params,even_fil_vals,odd_fil_vals,cs_fi
    
    local b1Pyr = {};
    local b2Pyr = {};
- 
+   
+   local isOrientation;
+
    for level = 1,#im_channels do
       b1Pyr[level] = {subtype = {},subname = {}, type = {}};
       b2Pyr[level] = {subtype = {},subname = {}, type = {}};
    end
    
-
    --EXTRACT EDGES
    for m = 1,#im_channels do
-
+      
       for sub = 1,#im_channels[m].subtype do
          map = torch.DoubleTensor(im_channels[m].subtype[sub].data):clone();
          imPyr = makePyramid(map,params);
-         ------------------
-         --Edge Detection--
-         ------------------
-         --timerr = torch.Timer();
-         EPyr = edgeEvenPyramid(imPyr,params,even_fil_vals);
-         --print('MakeEvenEdge = ' .. timerr:time().real);         
-         --timerr = torch.Timer();
-         OPyr, o = edgeOddPyramid(imPyr,params,odd_fil_vals);
-         --print('MakeOddEdge = ' .. timerr:time().real);      
-         --timerr = torch.Timer();   
-         cPyr = makeComplexEdge(EPyr,OPyr,cs_fil_val);
-         --print('MakeComplexEdge = ' .. timerr:time().real);         
 
-         ----------------------
-         --Make Image Pyramid--
-         ----------------------
          if(im_channels[m].subtype[sub].type == "Orientation") then
-            --timerr = torch.Timer();   
-            csPyr = gaborPyramid(imPyr,im_channels[m].subtype[sub].ori,params,im_channels[m].subtype[sub].filval);
-            --print('Make Gabor Pyramid (orientation) = ' .. timerr:time().real);
+            isOrientation = true;
          else
-            --timerr = torch.Timer();   
-            csPyr = csPyramid(imPyr,params,cs_fil_val);
-            --print('Make center surround pyramid = ' .. timerr:time().real);
+            isOrientation = false;
          end
-         
-         --timerr = torch.Timer();   
-         csPyrL,csPyrD = separatePyr(csPyr);
-         --print('separate pyramid = ' .. timerr:time().real);
-         --timerr = torch.Timer();
-         csPyrL,csPyrD = normCSPyr2(csPyrL,csPyrD);
-         --print('normalize cs pyramid = ' .. timerr:time().real);
+         cPyr,csPyrL,csPyrD = computeBorderPyramids(imPyr,params,even_fil_vals,odd_fil_vals,im_channels[m].subtype[sub].filval,cs_fil_val,isOrientation);         
          -----------------------------------------------
          --Generate Border Ownership and Grouping Maps--
          -----------------------------------------------
-         --timerr = torch.Timer();
          bPyr1_1, bPyr2_1, bPyr1_2, bPyr2_2 = borderPyramid(csPyrL,csPyrD,cPyr,params,vm1_fil_vals,vm2_fil_vals);
-         --print('border pyramid final  = ' .. timerr:time().real);
          b1Pyr[m].subtype[sub] = sumPyr(bPyr1_1,bPyr1_2);
          b2Pyr[m].subtype[sub] = sumPyr(bPyr2_1,bPyr2_2);
-
          if (im_channels[m].subtype[sub].type == "Orientation") then
             b1Pyr[m].subname[sub] = rad2deg(im_channels[m].subtype[sub].ori) .. " deg";
             b2Pyr[m].subname[sub] = rad2deg(im_channels[m].subtype[sub].ori) .. " deg";
@@ -885,6 +758,7 @@ function makeBorderOwnership(im_channels,params,even_fil_vals,odd_fil_vals,cs_fi
             b1Pyr[m].subname[sub] = im_channels[m].subtype[sub].type;
             b2Pyr[m].subname[sub] = im_channels[m].subtype[sub].type;
          end
+         
       end
       b1Pyr[m].type = im_channels[m].type;
       b2Pyr[m].type = im_channels[m].type;
@@ -930,8 +804,10 @@ function groupingPyramidMaxDiff(bpyrr1,bpyrr2,params)
       end
       m1, m_ind1 = torch.max(bTemp1,1);
       m_ind1 = m_ind1:type('torch.DoubleTensor');
-      
+
       for ori = 1,bPrs.numOri do
+         --convt = torch.Timer();
+
          m_i1 = torch.squeeze(m_ind1:clone());
          m_i1[torch.ne(m_i1,ori)] = 0;
          m_i1[torch.eq(m_i1,ori)] = 1;
@@ -946,30 +822,37 @@ function groupingPyramidMaxDiff(bpyrr1,bpyrr2,params)
          b1n[torch.lt(b1n,0)] = 0;
          b1n[torch.ne(b1n,0)] = 1;
          
+
          temp_data1_1 = torch.cmul(bpyrr1[level].orientation[ori].data,b1p);         
          temp_data1_1 = prePadImage(torch.DoubleTensor(1,temp_data1_1:size()[2],temp_data1_1:size()[3]):copy(temp_data1_1),MAX_FILTER_SIZE,MAX_FILTER_SIZE);
-         conv:forward(temp_data1_1);
-         outputs = conv.output;
+         conv2:forward(temp_data1_1);
+         outputs = conv2.output;
          out1_1 = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[invmsk1]);
-         
-         temp_data1_2 = torch.cmul(bpyrr2[level].orientation[ori].data,b1p * w);      
+--         out1_1 = torch.DoubleTensor(1,1);
+
+         temp_data1_2 = torch.cmul(bpyrr2[level].orientation[ori].data,b1p * w);
          temp_data1_2 = prePadImage(torch.DoubleTensor(1,temp_data1_2:size()[2],temp_data1_2:size()[3]):copy(temp_data1_2),MAX_FILTER_SIZE,MAX_FILTER_SIZE, torch.max(temp_data1_2));
-         conv:forward(temp_data1_2);
-         outputs = conv.output;
+         conv2:forward(temp_data1_2);
+         outputs = conv2.output;
          out1_2 = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[invmsk1]);
-         
+--         out1_2 = torch.DoubleTensor(1,1);
+
          temp_data2_1 = torch.cmul(bpyrr2[level].orientation[ori].data,b1n);
          temp_data2_1 = prePadImage(torch.DoubleTensor(1,temp_data2_1:size()[2],temp_data2_1:size()[3]):copy(temp_data2_1),MAX_FILTER_SIZE,MAX_FILTER_SIZE);
-         conv:forward(temp_data2_1);
-         outputs = conv.output;
+         conv2:forward(temp_data2_1);
+         outputs = conv2.output;
          out2_1 = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[invmsk2]);
-         
+--         out2_1 = torch.DoubleTensor(1,1);
+
          temp_data2_2 = torch.cmul(bpyrr1[level].orientation[ori].data,b1n * w);
          temp_data2_2 = prePadImage(torch.DoubleTensor(1,temp_data2_2:size()[2],temp_data2_2:size()[3]):copy(temp_data2_2),MAX_FILTER_SIZE,MAX_FILTER_SIZE, torch.max(temp_data2_2));
-         conv:forward(temp_data2_2);
-         outputs = conv.output;
+
+         conv2:forward(temp_data2_2);
+         outputs = conv2.output;
          out2_2 = torch.DoubleTensor(1,outputs:size(2),outputs:size(3)):copy(outputs[invmsk2]);
-         
+--         out2_2 = torch.DoubleTensor(1,1);
+
+
          final1 = out1_1 - out1_2;
          final2 = out2_1 - out2_2;
          
@@ -978,6 +861,8 @@ function groupingPyramidMaxDiff(bpyrr1,bpyrr2,params)
          
          gPyr1[level].orientation[ori].data = final1:clone();
          gPyr2[level].orientation[ori].data = final2:clone();
+         --print('conv time = ' .. convt:time().real)
+
       end
 
    end
@@ -1031,13 +916,11 @@ function makeGrouping(b1Pyrr,b2Pyrr,params)
       for sub = 1,#b1Pyrr[m].subtype do
          --print("Subtype " .. sub .. " of " .. #b1Pyrr[m].subtype);
          --print(b1Pyrr[m].subname[sub] .. "\n");
-         
+         --tg = torch.Timer();
          gPyr1_1[m].subtype[sub], gPyr2_1[m].subtype[sub] = groupingPyramidMaxDiff(b1Pyrr[m].subtype[sub],b2Pyrr[m].subtype[sub],params);    
-      timerr = torch.Timer();
-
+         --print('grouping time = ' .. tg:time().real);
          g11 = mergeLevel(gPyr1_1[m].subtype[sub]);
          g21 = mergeLevel(gPyr2_1[m].subtype[sub]);
-         print('grouping pyramid MAX DIFF  = ' .. timerr:time().real);
 
          gPyr[m].subtype[sub] = sumPyr(g11,g21);
       end
