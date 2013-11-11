@@ -33,7 +33,7 @@ local defaultParameters = getDefaultParameters(NUM_LEVELS);
 --SETUP FILTERS AND GET LOCATIONS IN NEURAL NETWORK SPATIAL CONVOLUTION--
 -------------------------------------------------------------------------
 local EVMSK,ODDMSK,GABORMSK,CSMSK,VMSK1,VMSK2;
-conv1,conv2,EVMSK,ODDMSK,GABORMSK,CSMSK,VMSK1,VMSK2 = createFilters(defaultParameters,MAX_FILTER_SIZE);
+conv,EVMSK,ODDMSK,GABORMSK,CSMSK,VMSK1,VMSK2 = createFilters(defaultParameters,MAX_FILTER_SIZE);
 
 local im = image.loadJPG('/home/jamal/ProtoObject/soccer.jpg')
 
